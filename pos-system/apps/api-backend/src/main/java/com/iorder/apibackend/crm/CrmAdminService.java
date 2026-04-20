@@ -61,6 +61,8 @@ public class CrmAdminService {
         Set.of("PLATFORM_SALES", "PLATFORM_SUPPORT");
     private static final Pattern SQL_IDENTIFIER_PATTERN = Pattern.compile("^[a-z][a-z0-9_]{2,62}$");
     private static final Pattern ROLE_KEY_PATTERN = Pattern.compile("^[A-Z][A-Z0-9_]{2,99}$");
+    private static final String DEFAULT_CENTRAL_BRANCH_CODE = "cn000001";
+    private static final String DEFAULT_CENTRAL_BRANCH_NAME = "Chi nhanh trung tam";
     private static final ZoneId DISPLAY_ZONE_ID = ZoneId.of("Asia/Ho_Chi_Minh");
     private static final DateTimeFormatter DISPLAY_TIME_FORMATTER =
         DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm").withZone(DISPLAY_ZONE_ID);
@@ -595,6 +597,7 @@ public class CrmAdminService {
         }
 
         tenant = ensureTenantExpiry(tenant);
+        ensureCentralStoreExists(tenant);
 
         if (request.responsibleAccountId() != null) {
             assignTenantResponsible(tenant, request.responsibleAccountId());
@@ -656,7 +659,7 @@ public class CrmAdminService {
         store.setTenantId(tenant.getId());
         store.setBranchCode(branchCode);
         store.setBranchName(requireNonBlank(request.branchName(), "branchName is required"));
-        store.setSourceSchemaName(normalizeSourceSchema(request.sourceSchemaName(), tenant.getTenantCode()));
+        store.setSourceSchemaName(resolveTenantSourceSchema(tenant));
         store.setActive(true);
         try {
             store = tenantBranchRepository.save(store);
@@ -677,7 +680,7 @@ public class CrmAdminService {
             store.setBranchName(request.branchName().trim());
         }
         if (request.sourceSchemaName() != null && !request.sourceSchemaName().isBlank()) {
-            store.setSourceSchemaName(request.sourceSchemaName().trim());
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sourceSchemaName is immutable");
         }
         if (request.active() != null) {
             store.setActive(request.active());
@@ -1309,11 +1312,40 @@ public class CrmAdminService {
         return requireNonBlank(branchCode, "branchCode is required").toLowerCase(Locale.ROOT);
     }
 
-    private String normalizeSourceSchema(String sourceSchemaName, String fallbackTenantCode) {
-        if (sourceSchemaName == null || sourceSchemaName.isBlank()) {
-            return fallbackTenantCode;
+    private String resolveTenantSourceSchema(Tenant tenant) {
+        if (tenant.getSchemaName() != null && !tenant.getSchemaName().isBlank()) {
+            return normalizeSqlIdentifier(tenant.getSchemaName(), "tenant schema is invalid");
         }
-        return sourceSchemaName.trim().toLowerCase(Locale.ROOT);
+
+        String normalizedTenantCode = requireNonBlank(tenant.getTenantCode(), "tenantCode is required")
+            .toLowerCase(Locale.ROOT)
+            .replaceFirst("^tenant[_-]?", "");
+        if (normalizedTenantCode.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "tenant code is invalid for source schema");
+        }
+        return normalizeSqlIdentifier("tenant_" + normalizedTenantCode, "tenant code is invalid for source schema");
+    }
+
+    private void ensureCentralStoreExists(Tenant tenant) {
+        if (tenantBranchRepository.findByTenantIdAndBranchCodeIgnoreCase(tenant.getId(), DEFAULT_CENTRAL_BRANCH_CODE).isPresent()) {
+            return;
+        }
+
+        TenantBranch centralStore = new TenantBranch();
+        centralStore.setTenantId(tenant.getId());
+        centralStore.setBranchCode(DEFAULT_CENTRAL_BRANCH_CODE);
+        centralStore.setBranchName(DEFAULT_CENTRAL_BRANCH_NAME);
+        centralStore.setSourceSchemaName(resolveTenantSourceSchema(tenant));
+        centralStore.setActive(true);
+
+        try {
+            tenantBranchRepository.save(centralStore);
+        } catch (DataIntegrityViolationException ex) {
+            if (tenantBranchRepository.findByTenantIdAndBranchCodeIgnoreCase(tenant.getId(), DEFAULT_CENTRAL_BRANCH_CODE).isPresent()) {
+                return;
+            }
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot create default central store", ex);
+        }
     }
 
     private String normalizeNullable(String value) {

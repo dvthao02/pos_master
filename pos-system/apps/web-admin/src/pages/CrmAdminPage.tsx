@@ -141,8 +141,7 @@ export function CrmAdminPage() {
   const [storesByTenantCode, setStoresByTenantCode] = useState<Record<string, StoreSummaryResponse[]>>({});
   const [createStoreForm, setCreateStoreForm] = useState({
     branchCode: "",
-    branchName: "",
-    sourceSchemaName: ""
+    branchName: ""
   });
 
   const [createTenantSchemaForm, setCreateTenantSchemaForm] = useState({
@@ -516,6 +515,9 @@ export function CrmAdminPage() {
   const topbarNotificationCount = analytics?.supportTickets.filter((item) => item.status.toLowerCase() === "open").length
     ?? analytics?.supportTickets.length
     ?? 0;
+  const createStoreSourceSchemaName = detailTenant
+    ? (detailTenant.schemaName || buildTenantSchemaName(detailTenant.tenantCode))
+    : "";
   const adminTopbarMenuItems = [
     {
       key: "profile",
@@ -583,23 +585,29 @@ export function CrmAdminPage() {
       if (!detailTenant) {
         throw new Error("Khong tim thay doanh nghiep dang xem");
       }
+      if (!createStoreSourceSchemaName) {
+        throw new Error("Ma chi nhanh khong hop le de tao schema nguon");
+      }
       return createCrmStore(token, {
         tenantCode: detailTenant.tenantCode,
         branchCode: createStoreForm.branchCode.trim().toLowerCase(),
         branchName: createStoreForm.branchName.trim(),
-        sourceSchemaName: createStoreForm.sourceSchemaName.trim() || detailTenant.schemaName || buildTenantSchemaName(detailTenant.tenantCode)
+        sourceSchemaName: createStoreSourceSchemaName
       });
     },
     onSuccess: async () => {
       setCreateStoreForm({
         branchCode: "",
-        branchName: "",
-        sourceSchemaName: ""
+        branchName: ""
       });
       setTenantPanelTab("summary");
       await invalidateCoreQueries();
     },
     onError: (error) => {
+      if (error instanceof Error && error.message.includes("(409)")) {
+        window.alert("Ma chi nhanh da ton tai trong doanh nghiep nay. Vui long nhap ma khac.");
+        return;
+      }
       window.alert(error instanceof Error ? error.message : "Khong the tao cua hang con");
     }
   });
@@ -1085,15 +1093,14 @@ export function CrmAdminPage() {
     setActiveRowMenu(null);
     setTenantInlineActionMode("list");
     setTenantStatusTarget(null);
-    const tenant = tenantRows.find((item) => item.tenantCode === tenantCode);
     setSelectedTenantCode(tenantCode);
     setDetailTenantCode(tenantCode);
     setTenantDetailViewTab("branches");
     setTenantPanelTab("store");
-    setCreateStoreForm((prev) => ({
-      ...prev,
-      sourceSchemaName: prev.sourceSchemaName || tenant?.schemaName || buildTenantSchemaName(tenantCode)
-    }));
+    setCreateStoreForm({
+      branchCode: "",
+      branchName: ""
+    });
   }
 
   function openTenantProductDialog(tenantCode: string) {
@@ -1585,63 +1592,67 @@ export function CrmAdminPage() {
             ? "Billing / hoa don"
             : "Chua chon chuc nang";
 
+  const tenantEditWorkspaceForm = detailTenant ? (
+    <form className="form-grid tenant-side-form-grid" onSubmit={(event: FormEvent) => {
+      event.preventDefault();
+      updateTenantSchemaMutation.mutate();
+    }}>
+      <label>Ma cua hang<input value={normalizeStoreCode(detailTenant.tenantCode)} readOnly /></label>
+      <label>Ma chuoi (ID Admin Store)<input value={getChainAccessCode(detailTenant.schemaName ?? "", detailTenant.tenantCode)} readOnly /></label>
+      <p className="section-note">Schema noi bo: {detailTenant.schemaName || buildTenantSchemaName(detailTenant.tenantCode)}</p>
+      <label>Ten phap nhan *<input value={updateTenantSchemaForm.legalName} onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, legalName: event.target.value }))} required /></label>
+      <label>Ten thuong hieu<input value={updateTenantSchemaForm.brandName} onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, brandName: event.target.value }))} /></label>
+      <label>
+        Goi dich vu
+        <select value={updateTenantSchemaForm.subscriptionPlan} onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, subscriptionPlan: event.target.value }))}>
+          <option value="standard">standard</option>
+          <option value="pro">pro</option>
+          <option value="enterprise">enterprise</option>
+        </select>
+      </label>
+      <label>
+        Trang thai
+        <select value={updateTenantSchemaForm.status} onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, status: event.target.value }))}>
+          <option value="trial">Thu nghiem</option>
+          <option value="active">Dang dung</option>
+          <option value="suspended">Tam ngung</option>
+          <option value="closed">Da dong</option>
+        </select>
+      </label>
+      <label>
+        Nguoi phu trach
+        <select value={updateTenantSchemaForm.responsibleAccountId} onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, responsibleAccountId: event.target.value }))}>
+          <option value="">-- Chua gan --</option>
+          {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.username}</option>)}
+        </select>
+      </label>
+      <label>
+        Ngay tao
+        <input
+          type="date"
+          value={updateTenantSchemaForm.createdAt}
+          onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, createdAt: event.target.value }))}
+        />
+      </label>
+      <label>
+        Han su dung
+        <input
+          type="date"
+          value={updateTenantSchemaForm.subscriptionExpiresAt}
+          onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, subscriptionExpiresAt: event.target.value }))}
+        />
+      </label>
+      <div className="button-row">
+        <button className="ghost-button" type="button" onClick={() => setTenantInlineActionMode("list")}>Quay lai</button>
+        <button className="primary-button" type="submit" disabled={updateTenantSchemaMutation.isPending}>{updateTenantSchemaMutation.isPending ? "Dang luu..." : "Luu doanh nghiep"}</button>
+      </div>
+    </form>
+  ) : null;
+
   const tenantActionWorkspaceContent = detailTenant ? (
     <>
       {tenantInlineActionMode === "edit" ? (
-        <form className="form-grid" onSubmit={(event: FormEvent) => {
-          event.preventDefault();
-          updateTenantSchemaMutation.mutate();
-        }}>
-          <label>Ma cua hang<input value={normalizeStoreCode(detailTenant.tenantCode)} readOnly /></label>
-          <label>Ma chuoi (ID Admin Store)<input value={getChainAccessCode(detailTenant.schemaName ?? "", detailTenant.tenantCode)} readOnly /></label>
-          <p className="section-note">Schema noi bo: {detailTenant.schemaName || buildTenantSchemaName(detailTenant.tenantCode)}</p>
-          <label>Ten phap nhan *<input value={updateTenantSchemaForm.legalName} onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, legalName: event.target.value }))} required /></label>
-          <label>Ten thuong hieu<input value={updateTenantSchemaForm.brandName} onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, brandName: event.target.value }))} /></label>
-          <label>
-            Goi dich vu
-            <select value={updateTenantSchemaForm.subscriptionPlan} onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, subscriptionPlan: event.target.value }))}>
-              <option value="standard">standard</option>
-              <option value="pro">pro</option>
-              <option value="enterprise">enterprise</option>
-            </select>
-          </label>
-          <label>
-            Trang thai
-            <select value={updateTenantSchemaForm.status} onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, status: event.target.value }))}>
-              <option value="trial">Thu nghiem</option>
-              <option value="active">Dang dung</option>
-              <option value="suspended">Tam ngung</option>
-              <option value="closed">Da dong</option>
-            </select>
-          </label>
-          <label>
-            Nguoi phu trach
-            <select value={updateTenantSchemaForm.responsibleAccountId} onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, responsibleAccountId: event.target.value }))}>
-              <option value="">-- Chua gan --</option>
-              {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.username}</option>)}
-            </select>
-          </label>
-          <label>
-            Ngay tao
-            <input
-              type="date"
-              value={updateTenantSchemaForm.createdAt}
-              onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, createdAt: event.target.value }))}
-            />
-          </label>
-          <label>
-            Han su dung
-            <input
-              type="date"
-              value={updateTenantSchemaForm.subscriptionExpiresAt}
-              onChange={(event) => setUpdateTenantSchemaForm((prev) => ({ ...prev, subscriptionExpiresAt: event.target.value }))}
-            />
-          </label>
-          <div className="button-row">
-            <button className="ghost-button" type="button" onClick={() => setTenantInlineActionMode("list")}>Quay lai</button>
-            <button className="primary-button" type="submit" disabled={updateTenantSchemaMutation.isPending}>{updateTenantSchemaMutation.isPending ? "Dang luu..." : "Luu doanh nghiep"}</button>
-          </div>
-        </form>
+        tenantEditWorkspaceForm
       ) : null}
 
       {tenantInlineActionMode === "plan" ? (
@@ -2416,16 +2427,28 @@ export function CrmAdminPage() {
                                       <div className="section-title-row">
                                         <h3>Thong tin chung</h3>
                                       </div>
-                                      <div className="form-grid tenant-side-form-grid">
-                                        <label>Ma chuoi (Schema)<input value={detailTenant.schemaName || buildTenantSchemaName(detailTenant.tenantCode)} readOnly /></label>
-                                        <label>Ma cua hang<input value={normalizeStoreCode(detailTenant.tenantCode)} readOnly /></label>
-                                        <label>Ten cua hang<input value={detailTenant.legalName} readOnly /></label>
-                                        <label>Nhan vien phu trach<input value={detailTenant.responsibleFullName || detailTenant.responsibleUsername || "Chua gan"} readOnly /></label>
-                                      </div>
+                                      {tenantInlineActionMode === "edit" && canAdminActions ? tenantEditWorkspaceForm : (
+                                        <div className="form-grid tenant-side-form-grid">
+                                          <label>Ma chuoi (Schema)<input value={detailTenant.schemaName || buildTenantSchemaName(detailTenant.tenantCode)} readOnly /></label>
+                                          <label>Ma cua hang<input value={normalizeStoreCode(detailTenant.tenantCode)} readOnly /></label>
+                                          <label>Ten cua hang<input value={detailTenant.legalName} readOnly /></label>
+                                          <label>Nhan vien phu trach<input value={detailTenant.responsibleFullName || detailTenant.responsibleUsername || "Chua gan"} readOnly /></label>
+                                        </div>
+                                      )}
                                       {canAdminActions ? (
                                         <div className="button-row compact-actions tenant-tab-actions">
-                                          <button className="ghost-button" type="button" onClick={() => openTenantEditInlinePanel(detailTenant.tenantCode)}>
-                                            <i className="fa-solid fa-pen" aria-hidden="true" /> Sua thong tin
+                                          <button
+                                            className="ghost-button"
+                                            type="button"
+                                            onClick={() => {
+                                              if (tenantInlineActionMode === "edit") {
+                                                setTenantInlineActionMode("list");
+                                                return;
+                                              }
+                                              openTenantEditInlinePanel(detailTenant.tenantCode);
+                                            }}
+                                          >
+                                            <i className={`fa-solid ${tenantInlineActionMode === "edit" ? "fa-xmark" : "fa-pen"}`} aria-hidden="true" /> {tenantInlineActionMode === "edit" ? "Dong sua" : "Sua thong tin"}
                                           </button>
                                           <button
                                             className="ghost-button"
@@ -2545,27 +2568,33 @@ export function CrmAdminPage() {
                                         <p className="section-note">Gia han ap dung theo cap doanh nghiep. Cua hang con dung chung goi dich vu cua doanh nghiep.</p>
                                       </div>
                                     </div>
-                                    <div className="form-grid tenant-side-form-grid">
-                                      <label>Goi dich vu<input value={detailTenant.subscriptionPlan} readOnly /></label>
-                                      <label>Ngay het han<input value={detailTenant.displayExpiry} readOnly /></label>
-                                    </div>
-                                    <div className="button-row compact-actions tenant-tab-actions">
-                                      {(canAdminActions || canBillingActions) ? (
-                                        <button className="ghost-button" type="button" onClick={() => openTenantPlanDialog(detailTenant.tenantCode)}>
-                                          <i className="fa-solid fa-layer-group" aria-hidden="true" /> Doi goi
-                                        </button>
-                                      ) : null}
-                                      {canBillingActions ? (
-                                        <button className="ghost-button" type="button" onClick={() => openTenantUtilityDialog(detailTenant.tenantCode, "invoice")}>
-                                          <i className="fa-solid fa-file-invoice-dollar" aria-hidden="true" /> Xuat hoa don
-                                        </button>
-                                      ) : null}
-                                      {canAccessRenewTab ? (
-                                        <button className="primary-button" type="button" onClick={() => openRenewalModal(detailTenant.tenantCode)}>
-                                          <i className="fa-solid fa-calendar-plus" aria-hidden="true" /> Gia han ngay
-                                        </button>
-                                      ) : null}
-                                    </div>
+                                    {tenantInlineActionMode === "plan" ? (
+                                      tenantActionWorkspaceContent
+                                    ) : (
+                                      <>
+                                        <div className="form-grid tenant-side-form-grid">
+                                          <label>Goi dich vu<input value={detailTenant.subscriptionPlan} readOnly /></label>
+                                          <label>Ngay het han<input value={detailTenant.displayExpiry} readOnly /></label>
+                                        </div>
+                                        <div className="button-row compact-actions tenant-tab-actions">
+                                          {(canAdminActions || canBillingActions) ? (
+                                            <button className="ghost-button" type="button" onClick={() => openTenantPlanDialog(detailTenant.tenantCode)}>
+                                              <i className="fa-solid fa-layer-group" aria-hidden="true" /> Doi goi / Sua han
+                                            </button>
+                                          ) : null}
+                                          {canBillingActions ? (
+                                            <button className="ghost-button" type="button" onClick={() => openTenantUtilityDialog(detailTenant.tenantCode, "invoice")}>
+                                              <i className="fa-solid fa-file-invoice-dollar" aria-hidden="true" /> Xuat hoa don
+                                            </button>
+                                          ) : null}
+                                          {canAccessRenewTab ? (
+                                            <button className="primary-button" type="button" onClick={() => openRenewalModal(detailTenant.tenantCode)}>
+                                              <i className="fa-solid fa-calendar-plus" aria-hidden="true" /> Gia han ngay
+                                            </button>
+                                          ) : null}
+                                        </div>
+                                      </>
+                                    )}
                                   </article>
                                 ) : null}
 
@@ -2602,7 +2631,10 @@ export function CrmAdminPage() {
                           }}>
                             <label>Ma chi nhanh *<input value={createStoreForm.branchCode} onChange={(event) => setCreateStoreForm((prev) => ({ ...prev, branchCode: event.target.value }))} placeholder="Vi du: cn1" required /></label>
                             <label>Ten chi nhanh *<input value={createStoreForm.branchName} onChange={(event) => setCreateStoreForm((prev) => ({ ...prev, branchName: event.target.value }))} placeholder="Vi du: ACafe Quan 1" required /></label>
-                            <label>Schema nguon<input value={createStoreForm.sourceSchemaName} onChange={(event) => setCreateStoreForm((prev) => ({ ...prev, sourceSchemaName: event.target.value }))} placeholder="tenant_acafe" /></label>
+                            <label>Schema nguon (chi nhanh trung tam)
+                              <input value={createStoreSourceSchemaName} placeholder="tenant_acafe" readOnly />
+                            </label>
+                            <p className="section-note">Schema nguon la schema cua chi nhanh trung tam, giu co dinh va khong cho phep chinh sua.</p>
                             <div className="button-row">
                               <button className="ghost-button" type="button" onClick={() => setTenantPanelTab("summary")}>Huy</button>
                               <button className="primary-button" type="submit" disabled={createStoreMutation.isPending}>
@@ -3296,7 +3328,7 @@ export function CrmAdminPage() {
         </div>
       ) : null}
 
-      {detailTenant && tenantInlineActionMode !== "list" ? (
+      {detailTenant && tenantInlineActionMode !== "list" && tenantInlineActionMode !== "edit" && tenantInlineActionMode !== "plan" ? (
         <div className="drawer-backdrop" role="presentation" onClick={() => setTenantInlineActionMode("list")}>
           <aside className="drawer-panel modal-panel tenant-action-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
             <div className="section-title-row">
